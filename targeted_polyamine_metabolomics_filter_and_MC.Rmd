@@ -1,0 +1,104 @@
+---
+title: "targeted_polyamine_metabolomics_filter_and_MC"
+author: "Kelsie Nauta"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+library('dplyr')
+library('tidyr')
+library("tidyverse")
+library("MASS")
+library("ggformula")
+library("nnet")
+library("ggeffects")
+library("ggplot2")
+```
+
+```{r}
+skyline_export <- read.csv("MC00465_PolyamineData_12_22_2023_t.csv")
+
+groups <- as.data.frame(skyline_export[1, ])
+numerics <- skyline_export[2:nrow(skyline_export) , ]
+
+numerics <- numerics %>%
+  mutate(across(everything(), ~ as.numeric(.x)))
+
+```
+
+```{r}
+add_filter <- numerics %>%
+  mutate(PB_Filter = 5 * PB02)
+
+```
+
+```{r}
+post_filter <- add_filter %>%
+  mutate(across(everything(), ~ ifelse(.x < PB_Filter, NA, .)))
+
+
+
+#write.csv(post_filter, file = "MC00465_filtered.csv")
+```
+
+```{r}
+log10df <- log10(numerics)
+data_for_aov <- rbind(groups, log10df)
+data_for_aov$Samples <- skyline_export$Samples
+data_for_aov <- t(data_for_aov)
+samples_list <- data_for_aov[1,]
+colnames(data_for_aov) <- samples_list
+data_for_aov <- as.data.frame(data_for_aov[2:19,])
+
+data_for_aov <- data_for_aov %>%
+  mutate(across(-group, ~ as.numeric(.x)))
+
+cols <- colnames(data_for_aov) #create list of col names
+cols <- cols[cols != "group"] #remove groups col
+
+```
+
+
+```{r}
+all_p_vals <- data.frame()
+all_anova_results <- data.frame()
+all_comparisons <- data.frame()
+
+for (col in cols){
+  #make iterative formulas for lm
+  formula <- as.formula(paste(col, "~ group")) #paste name of column from col list to ~Groups to make iterative formulas, convert to formula type with as.formula
+  
+  #fit data to lm
+  lm_output <- lm(formula, data = data_for_aov) #pass formula to lm and compute lm per metabolite (col)
+  
+  #test for significant differences between groups for each metabolite
+  anova_output <- anova(lm_output)
+  
+  #multiple comparisons, iterate through columns as response variables
+  multiple_comparisons <- pairwise.t.test(data_for_aov[[col]], data_for_aov$group, p.adjust.method = "BH")
+  
+  #save adjusted p-vals
+  all_comparisons <- rbind(all_comparisons, multiple_comparisons$p.value)
+  
+  #save anova outputs
+  all_anova_results <- rbind(all_anova_results, anova_output)
+  #extract lm data
+  summary_output <- (summary(lm_output)) #summary contain multiple tables, create summary object
+  #extract just the coefficients table
+  coefficients_table <- summary_output$coefficients #extract just the table with p_vals (coefficients) from the summary object
+ #extract just the p_vals
+  p_vals <- coefficients_table[, "Pr(>|t|)"] #$ notation can't handle special characters like > so need to use bracket notation, extract p_vals column
+  #save p_vals
+  all_p_vals <- rbind(all_p_vals, p_vals)
+} 
+
+#write.csv(all_comparisons, file = "MCO0465_multiple_comparisions.csv")
+```
+
